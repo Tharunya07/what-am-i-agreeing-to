@@ -4,8 +4,8 @@ import rollupPluginSourcemaps from "rollup-plugin-sourcemaps";
 import globResolverPlugin from "@raquo/vite-plugin-glob-resolver";
 import importSideEffectPlugin from "@raquo/vite-plugin-import-side-effect";
 
-export default defineConfig({
-  base: "/",
+export default defineConfig(({ mode }) => ({
+  base: mode === "production" ? "/what-am-i-agreeing-to/" : "/",
   publicDir: "public",
   plugins: [
     scalaJSPlugin({
@@ -42,4 +42,4 @@ export default defineConfig({
     strictPort: true,
     logLevel: "debug"
   }
-})
+}))
