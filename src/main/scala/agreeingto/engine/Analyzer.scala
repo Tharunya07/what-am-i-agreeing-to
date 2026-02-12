@@ -12,9 +12,9 @@ object Analyzer:
   private val categoryWeights: Map[ClauseCategory, Double] = Map(
     ClauseCategory.AutoRenewal -> 1.0,
     ClauseCategory.Cancellation -> 1.0,
-    ClauseCategory.FeesPenalties -> 1.5,
+    ClauseCategory.FeesPenalties -> 1.8,
     ClauseCategory.DataSharing -> 1.1,
-    ClauseCategory.ArbitrationLiability -> 1.5
+    ClauseCategory.ArbitrationLiability -> 1.9
   )
 
   private val docTypeSignals: List[(DocType, List[Regex])] = List(
@@ -107,11 +107,27 @@ object Analyzer:
       score * weight
     }.sum
     val maxWeighted = categoryWeights.values.sum * 100.0
-    val riskScore = math.round((weightedSum / maxWeighted) * 100).toInt.max(0).min(100)
+    val baseRiskScore = math.round((weightedSum / maxWeighted) * 100).toInt
+
+    val autoRenewalScore = cappedCategoryScores.getOrElse(ClauseCategory.AutoRenewal, 0)
+    val feesPenaltiesScore = cappedCategoryScores.getOrElse(ClauseCategory.FeesPenalties, 0)
+    val arbitrationLiabilityScore = cappedCategoryScores.getOrElse(ClauseCategory.ArbitrationLiability, 0)
+
+    val autoRenewalFeesBonus =
+      if autoRenewalScore > 40 && feesPenaltiesScore > 40 then 10 else 0
+
+    val arbitrationBoostMultiplier =
+      if arbitrationLiabilityScore > 30 then 1.08 else 1.0
+
+    val riskScore = math
+      .round((baseRiskScore + autoRenewalFeesBonus) * arbitrationBoostMultiplier)
+      .toInt
+      .max(0)
+      .min(100)
 
     val riskLevel =
-      if riskScore < 20 then RiskLevel.Low
-      else if riskScore < 50 then RiskLevel.Medium
+      if riskScore < 25 then RiskLevel.Low
+      else if riskScore < 60 then RiskLevel.Medium
       else RiskLevel.High
 
     val topCategories = findings.take(2)
