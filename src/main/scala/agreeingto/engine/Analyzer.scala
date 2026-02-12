@@ -71,34 +71,60 @@ object Analyzer:
     }
 
     val cappedCategoryScores = categoryScores.view.mapValues(v => math.min(100, v)).toMap
-    val findings = cappedCategoryScores.toList
+    val scoredCategories = cappedCategoryScores.toList
       .filter(_._2 > 0)
       .sortBy((_, score) => -score)
-      .map { (category, score) =>
-        val evidence = sents
-          .filter(s => sentenceCategoryMatchCount((category, s.id)) > 0)
-          .sortBy { s =>
-            (
-              -sentenceCategoryMatchCount((category, s.id)),
-              -sentenceCategoryWeight((category, s.id)),
-              -s.text.length,
-              s.start
-            )
+    val scoredCategorySet = scoredCategories.map(_._1).toSet
+
+    val assignedCategoryBySentence: Map[Int, ClauseCategory] =
+      sents
+        .flatMap { sentence =>
+          val matchingCategories = scoredCategories.collect {
+            case (category, _) if sentenceCategoryMatchCount((category, sentence.id)) > 0 => category
           }
-          .take(2)
+          matchingCategories.headOption.map { _ =>
+            val bestCategory = matchingCategories.maxBy { category =>
+              (
+                cappedCategoryScores.getOrElse(category, 0),
+                sentenceCategoryMatchCount((category, sentence.id)),
+                sentenceCategoryWeight((category, sentence.id)),
+                category.toString
+              )
+            }
+            sentence.id -> bestCategory
+          }
+        }
+        .toMap
 
-        val explanation = categoryTopRule
-          .get(category)
-          .map(_.explanation)
-          .getOrElse("This category contains potentially important obligations.")
+    val findings = scoredCategories.map { (category, score) =>
+      val evidence = sents
+        .filter { s =>
+          scoredCategorySet(category) &&
+          sentenceCategoryMatchCount((category, s.id)) > 0 &&
+          assignedCategoryBySentence.get(s.id).contains(category)
+        }
+        .sortBy { s =>
+          (
+            -sentenceCategoryMatchCount((category, s.id)),
+            -sentenceCategoryWeight((category, s.id)),
+            -s.text.length,
+            s.start
+          )
+        }
+        .take(2)
 
-        ClauseFinding(
-          category = category,
-          score = score,
-          evidence = evidence,
-          explanation = explanation
-        )
-      }
+      val explanation = categoryTopRule
+        .get(category)
+        .map(_.explanation)
+        .getOrElse("This category contains potentially important obligations.")
+
+      ClauseFinding(
+        category = category,
+        score = score,
+        evidence = evidence,
+        explanation = explanation
+      )
+    }
 
     val (docType, docTypeConfidence) = classifyDocType(text)
 
@@ -144,8 +170,9 @@ object Analyzer:
         val length = sentenceById.get(sentenceId).map(_.text.length).getOrElse(0)
         (-totalWeight, -length, sentenceById(sentenceId).start)
       }
-      .take(3)
       .flatMap((id, _) => sentenceById.get(id))
+      .distinctBy(_.id)
+      .take(3)
 
     val nextAction = nextActionFor(
       findings.headOption.map(_.category)
