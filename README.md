@@ -40,6 +40,29 @@ Navigate to http://localhost:5173
 Open the browser's dev console – this is where logs and exceptions will go.
 
 
+## Deployment verification checklist
+
+1. Local dev
+- `npm install`
+- `npm run dev`
+- Verify sample buttons work, `Analyze` works, `Copy results` works, and there are no browser console errors.
+
+2. Local production build
+- `npm run build`
+- Confirm `dist/` exists after build.
+- Optional: `npm run preview`, then open the preview URL and smoke test the app.
+
+3. GitHub Pages
+- Confirm Vite `base` path matches the repository name.
+- Confirm GitHub Actions workflow installs Java 17 and `sbt`, and the workflow run succeeds.
+- Confirm the Pages URL loads and static assets do not return 404.
+
+4. Troubleshooting
+- Blank page: Vite `base` path is likely incorrect.
+- Build fails: `sbt` setup may be missing or broken in GitHub Actions.
+- Styling missing: asset paths are likely incorrect.
+
+
 ## IDE config
 
 **Get an IDE or editor that understands Scala and shows you type info, lets you go-to-definition, etc. on day one.** Get into the habit of using those features to understand code and diagnose issues. This will help you understand the code better, be more self-sufficient in diagnosing issues, and overall improve your productivity and learning experience.
