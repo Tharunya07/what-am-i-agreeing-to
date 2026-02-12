@@ -63,7 +63,7 @@ import scala.util.{Failure, Success}
 
     s"""What Am I Agreeing To? (local analysis)
        |
-       |Doc type: ${friendlyDocType(analysis)} (${analysis.docTypeConfidence}%)
+       |Doc type: ${friendlyDocType(analysis)} (${docTypeConfidenceLabel(analysis)})
        |Risk: ${analysis.risk.toString} (${analysis.riskScore}/100)
        |Top areas: $topAreasLine
        |
@@ -196,8 +196,14 @@ import scala.util.{Failure, Success}
             h2("Analysis"),
             p(
               b("Doc Type: "),
-              s"${friendlyDocType(analysis)} (${analysis.docTypeConfidence}%)"
+              s"${friendlyDocType(analysis)} (${docTypeConfidenceLabel(analysis)})"
             ),
+            if isLowConfidenceDocType(analysis) then
+              p(
+                className := "muted",
+                "Tip: paste the billing, cancellation, or disputes section for clearer results."
+              )
+            else span(),
             p(
               b("Risk: "), span(className := s"badge ${riskClass(analysis)}", analysis.risk.toString),
               s" (${analysis.riskScore}/100)"
@@ -266,11 +272,20 @@ def prettyCategory(category: ClauseCategory): String =
     case ClauseCategory.ArbitrationLiability => "Arbitration and liability"
 
 def friendlyDocType(analysis: AnalysisResult): String =
-  analysis.docType match
-    case agreeingto.engine.DocType.PrivacyPolicy => "Privacy policy"
-    case agreeingto.engine.DocType.TermsAgreement => "Terms/Agreement"
-    case agreeingto.engine.DocType.EmailRequest => "Email request"
-    case agreeingto.engine.DocType.Unknown => "Unknown"
+  if isLowConfidenceDocType(analysis) then "General legal text"
+  else
+    analysis.docType match
+      case agreeingto.engine.DocType.PrivacyPolicy => "Privacy policy"
+      case agreeingto.engine.DocType.TermsAgreement => "Terms/Agreement"
+      case agreeingto.engine.DocType.EmailRequest => "Email request"
+      case agreeingto.engine.DocType.Unknown => "General legal text"
+
+def docTypeConfidenceLabel(analysis: AnalysisResult): String =
+  if isLowConfidenceDocType(analysis) then s"Low confidence (${analysis.docTypeConfidence}%)"
+  else s"${analysis.docTypeConfidence}%"
+
+def isLowConfidenceDocType(analysis: AnalysisResult): Boolean =
+  analysis.docType == agreeingto.engine.DocType.Unknown || analysis.docTypeConfidence < 55
 
 def riskClass(analysis: AnalysisResult): String =
   analysis.risk.toString.toLowerCase
