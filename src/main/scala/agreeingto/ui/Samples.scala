@@ -23,3 +23,16 @@ object Samples:
       |If we do not receive your response by the deadline, your service may be terminated temporarily until confirmation is received.
       |If you need clarification, please reply with your questions before the due date.
       |""".stripMargin
+
+  val compareOldSample: String =
+    """Your plan renews every year unless canceled at least 30 days before renewal.
+      |You may cancel from account settings with no extra fees if done before the renewal date.
+      |We may update service terms and notify you by email.
+      |""".stripMargin
+
+  val compareNewSample: String =
+    """Your plan renews automatically every year unless canceled at least 45 days before renewal.
+      |A cancellation processing fee and a late cancellation penalty may apply after billing starts.
+      |We can change pricing with 14 days notice and continue charging your payment method.
+      |Disputes must be resolved by binding arbitration and you waive class action rights.
+      |""".stripMargin

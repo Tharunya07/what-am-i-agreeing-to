@@ -28,3 +28,19 @@ case class AnalysisResult(
     readCarefully: List[Sentence],
     nextAction: String
 )
+
+case class CategoryScoreDiff(
+    category: ClauseCategory,
+    oldScore: Int,
+    newScore: Int,
+    delta: Int
+)
+
+case class CompareResult(
+    oldAnalysis: AnalysisResult,
+    newAnalysis: AnalysisResult,
+    deltaScore: Int,
+    categoryDiffs: List[CategoryScoreDiff],
+    addedCategories: List[ClauseCategory],
+    removedCategories: List[ClauseCategory]
+)

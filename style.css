@@ -44,6 +44,22 @@ body {
   align-items: center;
 }
 
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.tabs button {
+  min-width: 120px;
+}
+
+.compareGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 button {
   border: 1px solid #c7d2e6;
   border-radius: 10px;
@@ -196,5 +212,17 @@ mark {
 
   .toolbar button {
     width: 100%;
+  }
+
+  .tabs {
+    flex-direction: column;
+  }
+
+  .tabs button {
+    width: 100%;
+  }
+
+  .compareGrid {
+    grid-template-columns: 1fr;
   }
 }

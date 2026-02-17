@@ -1,7 +1,7 @@
 package agreeingto
 
 import com.raquo.laminar.api.L.{*, given}
-import agreeingto.engine.{AnalysisResult, Analyzer, ClauseCategory, Sentence}
+import agreeingto.engine.{AnalysisResult, Analyzer, CategoryScoreDiff, ClauseCategory, CompareResult, Sentence}
 import agreeingto.ui.Samples
 import org.scalajs.dom
 
@@ -9,14 +9,23 @@ import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 import scala.util.{Failure, Success}
 
 @main def main(): Unit = {
+  enum AppTab:
+    case Analyze, Compare
+
+  val comparePresenceThreshold = 25
+
+  val activeTab = Var(AppTab.Analyze)
   val inputText = Var("")
   val lastAnalysis = Var(Option.empty[AnalysisResult])
   val copyFeedback = Var(Option.empty[(String, Boolean)])
+  val oldText = Var("")
+  val newText = Var("")
+  val lastCompare = Var(Option.empty[CompareResult])
 
-  def scrollToAnalysis(): Unit =
+  def scrollTo(sectionId: String): Unit =
     dom.window.setTimeout(
       () =>
-        dom.document.getElementById("analysis-section") match
+        dom.document.getElementById(sectionId) match
           case elem: dom.HTMLElement => elem.scrollIntoView()
           case _ => (),
       30
@@ -27,7 +36,7 @@ import scala.util.{Failure, Success}
     if trimmed.isEmpty then lastAnalysis.set(None)
     else
       lastAnalysis.set(Some(Analyzer.analyze(text)))
-      scrollToAnalysis()
+      scrollTo("analysis-section")
 
   def setSample(text: String): Unit =
     inputText.set(text)
@@ -35,6 +44,54 @@ import scala.util.{Failure, Success}
 
   def resetCopyFeedbackLater(): Unit =
     dom.window.setTimeout(() => copyFeedback.set(None), 1800)
+
+  def categoryScores(analysis: AnalysisResult): Map[ClauseCategory, Int] =
+    analysis.findings.map(f => f.category -> f.score).toMap.withDefaultValue(0)
+
+  def runCompare(oldVersion: String, newVersion: String): Unit =
+    val oldTrimmed = oldVersion.trim
+    val newTrimmed = newVersion.trim
+    if oldTrimmed.isEmpty || newTrimmed.isEmpty then lastCompare.set(None)
+    else
+      val oldAnalysis = Analyzer.analyze(oldVersion)
+      val newAnalysis = Analyzer.analyze(newVersion)
+      val oldScores = categoryScores(oldAnalysis)
+      val newScores = categoryScores(newAnalysis)
+
+      val categoryDiffs = ClauseCategory.values.toList
+        .map { category =>
+          val oldScore = oldScores(category)
+          val newScore = newScores(category)
+          CategoryScoreDiff(
+            category = category,
+            oldScore = oldScore,
+            newScore = newScore,
+            delta = newScore - oldScore
+          )
+        }
+        .sortBy(diff => (-diff.delta, -diff.newScore, diff.category.toString))
+
+      val addedCategories = categoryDiffs
+        .filter(d => d.newScore > comparePresenceThreshold && d.oldScore <= comparePresenceThreshold)
+        .map(_.category)
+
+      val removedCategories = categoryDiffs
+        .filter(d => d.oldScore > comparePresenceThreshold && d.newScore <= comparePresenceThreshold)
+        .map(_.category)
+
+      lastCompare.set(
+        Some(
+          CompareResult(
+            oldAnalysis = oldAnalysis,
+            newAnalysis = newAnalysis,
+            deltaScore = newAnalysis.riskScore - oldAnalysis.riskScore,
+            categoryDiffs = categoryDiffs,
+            addedCategories = addedCategories,
+            removedCategories = removedCategories
+          )
+        )
+      )
+      scrollTo("compare-section")
 
   def buildCopySummary(analysis: AnalysisResult): String =
     val topAreas = analysis.findings.take(2).map(f => prettyCategory(f.category))
@@ -102,158 +159,251 @@ import scala.util.{Failure, Success}
         p("Paste policy, terms, or request text to get a fast first-pass review."),
         p("All analysis runs locally in your browser. Nothing is uploaded.")
       ),
-      detailsTag(
-        className := "card",
-        summaryTag(
-          cursor := "pointer",
-          fontWeight := "600",
-          "How this works"
-        ),
-        ul(
-          marginTop := "8px",
-          li("Rule-based scan for common clauses (auto-renewal, fees, data sharing, arbitration)."),
-          li("Shows the exact sentences that triggered each finding."),
-          li("Risk score is a simple weighted heuristic, not legal advice."),
-          li("Runs entirely in your browser, your text is not stored or sent anywhere."),
-          li("Best results: paste the relevant section (billing, cancellation, disputes).")
-        )
-      ),
       div(
-        className := "toolbar",
+        className := "tabs",
         button(
-          className := "secondary",
-          "Try subscription sample",
-          onClick --> Observer[dom.MouseEvent](_ => setSample(Samples.subscriptionSample))
-        ),
-        button(
-          className := "secondary",
-          "Try privacy sample",
-          onClick --> Observer[dom.MouseEvent](_ => setSample(Samples.privacySample))
-        ),
-        button(
-          className := "secondary",
-          "Try email sample",
-          onClick --> Observer[dom.MouseEvent](_ => setSample(Samples.emailSample))
-        ),
-        button(
-          className := "ghost",
-          "Clear",
-          onClick --> Observer[dom.MouseEvent] { _ =>
-            inputText.set("")
-            lastAnalysis.set(None)
-            copyFeedback.set(None)
-          }
-        )
-      ),
-      textArea(
-        className := "input",
-        rows := 10,
-        width := "100%",
-        placeholder := "Paste text here...",
-        value <-- inputText.signal,
-        onInput.mapToValue --> inputText
-      ),
-      div(
-        className := "muted",
-        child.text <-- inputText.signal.map(t => s"Characters: ${t.length}")
-      ),
-      div(
-        className := "muted",
-        "Tip: paste the 'Cancellation' section if you want a clearer next step."
-      ),
-      div(
-        className := "toolbar",
-        button(
-          className := "primary",
+          className <-- activeTab.signal.map(tab => if tab == AppTab.Analyze then "primary" else "secondary"),
           "Analyze",
-          disabled <-- inputText.signal.map(_.trim.isEmpty),
-          onClick.mapTo(inputText.now()) --> Observer[String](runAnalysis)
+          onClick --> Observer[dom.MouseEvent](_ => activeTab.set(AppTab.Analyze))
         ),
         button(
-          className := "secondary",
-          "Copy results",
-          disabled <-- lastAnalysis.signal.map(_.isEmpty),
-          onClick --> Observer[dom.MouseEvent] { _ =>
-            lastAnalysis.now().foreach(copyResults)
-          }
-        ),
-        child.maybe <-- copyFeedback.signal.map {
-          case Some((message, isError)) =>
-            Some(
-              span(
-                className := (if isError then "muted copyStatus error" else "muted copyStatus"),
-                message
-              )
-            )
-          case None => None
-        }
+          className <-- activeTab.signal.map(tab => if tab == AppTab.Compare then "primary" else "secondary"),
+          "Compare",
+          onClick --> Observer[dom.MouseEvent](_ => activeTab.set(AppTab.Compare))
+        )
       ),
-      child.maybe <-- lastAnalysis.signal.map { result =>
-        result.map { analysis =>
+      child <-- activeTab.signal.map {
+        case AppTab.Analyze =>
           div(
-            idAttr := "analysis-section",
-            className := "card",
-            h2("Analysis"),
-            p(
-              b("Doc Type: "),
-              s"${friendlyDocType(analysis)} (${docTypeConfidenceLabel(analysis)})"
-            ),
-            if isLowConfidenceDocType(analysis) then
-              p(
-                className := "muted",
-                "Tip: paste the billing, cancellation, or disputes section for clearer results."
-              )
-            else span(),
-            p(
-              b("Risk: "), span(className := s"badge ${riskClass(analysis)}", analysis.risk.toString),
-              s" (${analysis.riskScore}/100)"
-            ),
-            p(
-              analysis.riskWhy
-            ),
-            h3(className := "sectionTitle", "Findings"),
-            if analysis.findings.nonEmpty then
+            detailsTag(
+              className := "card",
+              summaryTag(
+                cursor := "pointer",
+                fontWeight := "600",
+                "How this works"
+              ),
               ul(
-                analysis.findings.map { finding =>
-                  li(
-                    b(s"${prettyCategory(finding.category)} (${finding.score}/100): "),
-                    finding.explanation,
-                    if finding.evidence.nonEmpty then
-                      ul(
-                        finding.evidence.take(2).map(s => li(s.text))
-                      )
-                    else span()
-                  )
+                marginTop := "8px",
+                li("Rule-based scan for common clauses (auto-renewal, fees, data sharing, arbitration)."),
+                li("Shows the exact sentences that triggered each finding."),
+                li("Risk score is a simple weighted heuristic, not legal advice."),
+                li("Runs entirely in your browser, your text is not stored or sent anywhere."),
+                li("Best results: paste the relevant section (billing, cancellation, disputes).")
+              )
+            ),
+            div(
+              className := "toolbar",
+              button(
+                className := "secondary",
+                "Try subscription sample",
+                onClick --> Observer[dom.MouseEvent](_ => setSample(Samples.subscriptionSample))
+              ),
+              button(
+                className := "secondary",
+                "Try privacy sample",
+                onClick --> Observer[dom.MouseEvent](_ => setSample(Samples.privacySample))
+              ),
+              button(
+                className := "secondary",
+                "Try email sample",
+                onClick --> Observer[dom.MouseEvent](_ => setSample(Samples.emailSample))
+              ),
+              button(
+                className := "ghost",
+                "Clear",
+                onClick --> Observer[dom.MouseEvent] { _ =>
+                  inputText.set("")
+                  lastAnalysis.set(None)
+                  copyFeedback.set(None)
                 }
               )
-            else p("No findings from current rules."),
-            h3(className := "sectionTitle", "Read Carefully"),
-            if analysis.readCarefully.nonEmpty then
-              ol(
-                analysis.readCarefully.take(3).map(s => li(s.text))
-              )
-            else p("No specific sentences flagged."),
-            div(
-              className := "card",
-              h3(className := "sectionTitle", "Next Action"),
-              p(analysis.nextAction)
+            ),
+            textArea(
+              className := "input",
+              rows := 10,
+              width := "100%",
+              placeholder := "Paste text here...",
+              value <-- inputText.signal,
+              onInput.mapToValue --> inputText
             ),
             div(
+              className := "muted",
+              child.text <-- inputText.signal.map(t => s"Characters: ${t.length}")
+            ),
+            div(
+              className := "muted",
+              "Tip: paste the 'Cancellation' section if you want a clearer next step."
+            ),
+            div(
+              className := "toolbar",
+              button(
+                className := "primary",
+                "Analyze",
+                disabled <-- inputText.signal.map(_.trim.isEmpty),
+                onClick.mapTo(inputText.now()) --> Observer[String](runAnalysis)
+              ),
+              button(
+                className := "secondary",
+                "Copy results",
+                disabled <-- lastAnalysis.signal.map(_.isEmpty),
+                onClick --> Observer[dom.MouseEvent] { _ =>
+                  lastAnalysis.now().foreach(copyResults)
+                }
+              ),
+              child.maybe <-- copyFeedback.signal.map {
+                case Some((message, isError)) =>
+                  Some(
+                    span(
+                      className := (if isError then "muted copyStatus error" else "muted copyStatus"),
+                      message
+                    )
+                  )
+                case None => None
+              }
+            ),
+            child.maybe <-- lastAnalysis.signal.map { result =>
+              result.map { analysis =>
+                div(
+                  idAttr := "analysis-section",
+                  className := "card",
+                  h2("Analysis"),
+                  p(
+                    b("Doc Type: "),
+                    s"${friendlyDocType(analysis)} (${docTypeConfidenceLabel(analysis)})"
+                  ),
+                  if isLowConfidenceDocType(analysis) then
+                    p(
+                      className := "muted",
+                      "Tip: paste the billing, cancellation, or disputes section for clearer results."
+                    )
+                  else span(),
+                  p(
+                    b("Risk: "), span(className := s"badge ${riskClass(analysis)}", analysis.risk.toString),
+                    s" (${analysis.riskScore}/100)"
+                  ),
+                  p(
+                    analysis.riskWhy
+                  ),
+                  h3(className := "sectionTitle", "Findings"),
+                  if analysis.findings.nonEmpty then
+                    ul(
+                      analysis.findings.map { finding =>
+                        li(
+                          b(s"${prettyCategory(finding.category)} (${finding.score}/100): "),
+                          finding.explanation,
+                          if finding.evidence.nonEmpty then
+                            ul(
+                              finding.evidence.take(2).map(s => li(s.text))
+                            )
+                          else span()
+                        )
+                      }
+                    )
+                  else p("No findings from current rules."),
+                  h3(className := "sectionTitle", "Read Carefully"),
+                  if analysis.readCarefully.nonEmpty then
+                    ol(
+                      analysis.readCarefully.take(3).map(s => li(s.text))
+                    )
+                  else p("No specific sentences flagged."),
+                  div(
+                    className := "card",
+                    h3(className := "sectionTitle", "Next Action"),
+                    p(analysis.nextAction)
+                  ),
+                  div(
+                    className := "card",
+                    h3(className := "sectionTitle", "Original Text (Highlighted)"),
+                    p(
+                      className := "muted",
+                      "Highlighted lines are the top 'Read carefully' sentences."
+                    ),
+                    div(
+                      className := "highlightedText",
+                      child <-- inputText.signal.map { text =>
+                        span(highlightedFragments(text, analysis.readCarefully.take(3)))
+                      }
+                    )
+                  )
+                )
+              }
+            }
+          )
+        case AppTab.Compare =>
+          div(
+            div(
               className := "card",
-              h3(className := "sectionTitle", "Original Text (Highlighted)"),
               p(
                 className := "muted",
-                "Highlighted lines are the top 'Read carefully' sentences."
+                "Compare old vs new text to see risk movement and category-level changes."
+              ),
+              p(
+                className := "muted",
+                s"Added/removed categories use threshold score > $comparePresenceThreshold."
+              )
+            ),
+            div(
+              className := "toolbar",
+              button(
+                className := "secondary",
+                "Load old sample",
+                onClick --> Observer[dom.MouseEvent](_ => oldText.set(Samples.compareOldSample))
+              ),
+              button(
+                className := "secondary",
+                "Load new sample",
+                onClick --> Observer[dom.MouseEvent](_ => newText.set(Samples.compareNewSample))
+              ),
+              button(
+                className := "ghost",
+                "Clear compare",
+                onClick --> Observer[dom.MouseEvent] { _ =>
+                  oldText.set("")
+                  newText.set("")
+                  lastCompare.set(None)
+                }
+              )
+            ),
+            div(
+              className := "compareGrid",
+              div(
+                h3(className := "sectionTitle", "Old version"),
+                textArea(
+                  className := "input",
+                  rows := 10,
+                  placeholder := "Paste old version...",
+                  value <-- oldText.signal,
+                  onInput.mapToValue --> oldText
+                ),
+                div(className := "muted", child.text <-- oldText.signal.map(t => s"Characters: ${t.length}"))
               ),
               div(
-                className := "highlightedText",
-                child <-- inputText.signal.map { text =>
-                  span(highlightedFragments(text, analysis.readCarefully.take(3)))
+                h3(className := "sectionTitle", "New version"),
+                textArea(
+                  className := "input",
+                  rows := 10,
+                  placeholder := "Paste new version...",
+                  value <-- newText.signal,
+                  onInput.mapToValue --> newText
+                ),
+                div(className := "muted", child.text <-- newText.signal.map(t => s"Characters: ${t.length}"))
+              )
+            ),
+            div(
+              className := "toolbar",
+              button(
+                className := "primary",
+                "Compare",
+                disabled <-- Signal.combine(oldText.signal, newText.signal).map { (o, n) =>
+                  o.trim.isEmpty || n.trim.isEmpty
+                },
+                onClick --> Observer[dom.MouseEvent] { _ =>
+                  runCompare(oldText.now(), newText.now())
                 }
               )
-            )
+            ),
+            child.maybe <-- lastCompare.signal.map(_.map(renderCompareResult))
           )
-        }
       },
       footerTag(
         className := "footer muted",
@@ -262,6 +412,54 @@ import scala.util.{Failure, Success}
     )
   )
 }
+
+def renderCompareResult(result: CompareResult): HtmlElement =
+  val deltaDirection =
+    if result.deltaScore > 0 then "Risk increased"
+    else if result.deltaScore < 0 then "Risk decreased"
+    else "Risk unchanged"
+
+  val deltaText =
+    if result.deltaScore > 0 then s"+${result.deltaScore}"
+    else result.deltaScore.toString
+
+  div(
+    idAttr := "compare-section",
+    className := "card",
+    h2("Compare Results"),
+    p(
+      b("Old risk: "),
+      span(className := s"badge ${riskClass(result.oldAnalysis)}", result.oldAnalysis.risk.toString),
+      s" (${result.oldAnalysis.riskScore}/100)"
+    ),
+    p(
+      b("New risk: "),
+      span(className := s"badge ${riskClass(result.newAnalysis)}", result.newAnalysis.risk.toString),
+      s" (${result.newAnalysis.riskScore}/100)"
+    ),
+    p(
+      b("Delta: "),
+      s"$deltaText ($deltaDirection)"
+    ),
+    h3(className := "sectionTitle", "Per-category score diffs"),
+    ul(
+      result.categoryDiffs.map { diff =>
+        val diffText = if diff.delta > 0 then s"+${diff.delta}" else diff.delta.toString
+        li(
+          b(s"${prettyCategory(diff.category)}: "),
+          s"${diff.oldScore} -> ${diff.newScore} (delta $diffText)"
+        )
+      }
+    ),
+    h3(className := "sectionTitle", "Added categories"),
+    if result.addedCategories.nonEmpty then
+      ul(result.addedCategories.map(c => li(prettyCategory(c))))
+    else p("None."),
+    h3(className := "sectionTitle", "Removed categories"),
+    if result.removedCategories.nonEmpty then
+      ul(result.removedCategories.map(c => li(prettyCategory(c))))
+    else p("None.")
+  )
 
 def prettyCategory(category: ClauseCategory): String =
   category match
